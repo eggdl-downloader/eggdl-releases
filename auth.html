@@ -157,16 +157,18 @@
 
     function bufferToBase64Url(buf) {
       const bytes = new Uint8Array(buf);
-      let str = '';
+      let binary = '';
       for (let i = 0; i < bytes.byteLength; i++) {
-        str += String.fromCharCode(bytes[i]);
+        binary += String.fromCharCode(bytes[i]);
       }
-      return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
 
     function base64UrlToBuffer(base64url) {
-      const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
-      const base64 = (base64url + padding).replace(/\-/g, '+').replace(/_/g, '/');
+      let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+      while (base64.length % 4) {
+        base64 += '=';
+      }
       const rawData = atob(base64);
       const outputArray = new Uint8Array(rawData.length);
       for (let i = 0; i < rawData.length; ++i) {
@@ -184,7 +186,7 @@
       }
 
       try {
-        const res = await fetch(FIREBASE_DB + '/security/developer_device_hash.json');
+        const res = await fetch(FIREBASE_DB + '/system/developer_biometric.json');
         const data = await res.json();
         if (data && data.credential_id) {
           enrolledCredId = data.credential_id;
@@ -220,13 +222,13 @@
       btn.disabled = true;
       icon.classList.add('active');
       msg.className = 'status-msg';
-      msg.innerText = 'Scan your fingerprint now...';
+      msg.innerText = 'Touch sensor with your finger...';
 
       if (navigator.vibrate) navigator.vibrate(30);
 
       try {
         if (!isEnrolled) {
-          // ENROLLMENT: Use WebAuthn with platform authenticator and required userVerification
+          // --- ENROLLMENT ---
           const challenge = new Uint8Array(32);
           window.crypto.getRandomValues(challenge);
           const userId = new Uint8Array(16);
@@ -262,8 +264,8 @@
 
           const credIdBase64 = bufferToBase64Url(credential.rawId);
 
-          // 1. Permanently register on Firebase & PC backend
-          await fetch(FIREBASE_DB + '/security/developer_device_hash.json', {
+          // 1. Permanently record on Firebase system & PC backend
+          await fetch(FIREBASE_DB + '/system/developer_biometric.json', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -275,7 +277,7 @@
           });
 
           // 2. Approve the active session
-          await fetch(FIREBASE_DB + '/admin_sessions/' + sessionId + '.json', {
+          await fetch(FIREBASE_DB + '/system/admin_sessions/' + sessionId + '.json', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -300,7 +302,7 @@
           btn.style.display = 'none';
 
         } else {
-          // VERIFICATION: Verify matching biometric passkey
+          // --- VERIFICATION ---
           const challenge = new Uint8Array(32);
           window.crypto.getRandomValues(challenge);
 
@@ -320,11 +322,12 @@
           if (!assertion) throw new Error('Biometric verification cancelled.');
 
           // Unlock session
-          await fetch(FIREBASE_DB + '/admin_sessions/' + sessionId + '.json', {
+          await fetch(FIREBASE_DB + '/system/admin_sessions/' + sessionId + '.json', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               status: 'approved',
+              credential_id: enrolledCredId,
               approved_at: new Date().toISOString()
             })
           });
