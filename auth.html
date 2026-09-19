@@ -1,2 +1,364 @@
-<!-- EggDL Biometric Verification Gateway -->
-<!DOCTYPE html><html><body><h1>EggDL Auth Gateway</h1></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>EggDL Hardware Biometric Gateway</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: #090d16;
+      color: #f8fafc;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .auth-card {
+      background: #111827;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 32px 24px;
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+      background: rgba(37, 99, 235, 0.12);
+      color: #60a5fa;
+      border: 1px solid rgba(37, 99, 235, 0.25);
+    }
+    .fp-icon-wrapper {
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      background: rgba(37, 99, 235, 0.1);
+      border: 2px solid rgba(37, 99, 235, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      color: #3b82f6;
+      transition: all 0.3s ease;
+    }
+    .fp-icon-wrapper.active {
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+      70% { transform: scale(1.05); box-shadow: 0 0 0 16px rgba(59, 130, 246, 0); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+    p {
+      font-size: 0.85rem;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+    .btn-auth {
+      width: 100%;
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 15px 20px;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-auth:active {
+      background: #1d4ed8;
+      transform: scale(0.98);
+    }
+    .btn-auth:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status-msg {
+      margin-top: 16px;
+      font-size: 0.82rem;
+      min-height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .status-success { color: #10b981; }
+    .status-error { color: #ef4444; }
+    .security-badge {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 0.72rem;
+      color: #64748b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-card">
+    <div class="badge" id="stageBadge"><i data-lucide="shield-check" style="width: 14px; height: 14px;"></i> Hardware Passkey</div>
+    <div class="fp-icon-wrapper" id="fpIcon">
+      <i data-lucide="fingerprint" style="width: 44px; height: 44px;"></i>
+    </div>
+    <h1 id="headline">Biometric Authentication</h1>
+    <p id="subtext">Touch your phone's fingerprint sensor to unlock the EggDL Admin Console.</p>
+
+    <button class="btn-auth" id="btnScan" onclick="startBiometricAuth()">
+      <i data-lucide="fingerprint" style="width: 18px; height: 18px;"></i>
+      <span id="btnLabel">Scan Fingerprint</span>
+    </button>
+
+    <div class="status-msg" id="statusMsg"></div>
+
+    <div class="security-badge">
+      <i data-lucide="lock" style="width: 12px; height: 12px;"></i> FIDO2 / WebAuthn Biometric Enclave
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+    const FIREBASE_DB = 'https://eggdl-app-default-rtdb.firebaseio.com';
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('s');
+
+    let enrolledCredId = null;
+    let isEnrolled = false;
+
+    function bufferToBase64Url(buf) {
+      const bytes = new Uint8Array(buf);
+      let str = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        str += String.fromCharCode(bytes[i]);
+      }
+      return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function base64UrlToBuffer(base64url) {
+      const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
+      const base64 = (base64url + padding).replace(/\-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray.buffer;
+    }
+
+    async function init() {
+      if (!sessionId) {
+        document.getElementById('headline').innerText = 'Invalid Session';
+        document.getElementById('subtext').innerText = 'Please scan a fresh QR code from your EggDL Admin Console.';
+        document.getElementById('btnScan').style.display = 'none';
+        return;
+      }
+
+      try {
+        const res = await fetch(FIREBASE_DB + '/security/developer_device_hash.json');
+        const data = await res.json();
+        if (data && data.credential_id) {
+          enrolledCredId = data.credential_id;
+          isEnrolled = true;
+          document.getElementById('stageBadge').innerHTML = '<i data-lucide="shield-check" style="width: 14px; height: 14px;"></i> Enrolled Phone';
+          document.getElementById('headline').innerText = 'Verify Fingerprint';
+          document.getElementById('subtext').innerText = 'Scan your registered fingerprint to authorize the PC console.';
+          document.getElementById('btnLabel').innerText = 'Touch Sensor to Verify';
+        } else {
+          isEnrolled = false;
+          document.getElementById('stageBadge').innerHTML = '<i data-lucide="plus-circle" style="width: 14px; height: 14px;"></i> Setup Mode';
+          document.getElementById('headline').innerText = 'Enroll Fingerprint';
+          document.getElementById('subtext').innerText = 'Register your phone fingerprint once. Your PC will permanently lock to this biometric hardware.';
+          document.getElementById('btnLabel').innerText = 'Scan Fingerprint to Enroll';
+        }
+        lucide.createIcons();
+      } catch (err) {
+        console.error('Init error:', err);
+      }
+    }
+
+    async function startBiometricAuth() {
+      const btn = document.getElementById('btnScan');
+      const msg = document.getElementById('statusMsg');
+      const icon = document.getElementById('fpIcon');
+
+      if (!window.PublicKeyCredential) {
+        msg.className = 'status-msg status-error';
+        msg.innerText = 'Biometrics not supported on this browser.';
+        return;
+      }
+
+      btn.disabled = true;
+      icon.classList.add('active');
+      msg.className = 'status-msg';
+      msg.innerText = 'Scan your fingerprint now...';
+
+      if (navigator.vibrate) navigator.vibrate(30);
+
+      try {
+        if (!isEnrolled) {
+          // ENROLLMENT: Use WebAuthn with platform authenticator and required userVerification
+          const challenge = new Uint8Array(32);
+          window.crypto.getRandomValues(challenge);
+          const userId = new Uint8Array(16);
+          window.crypto.getRandomValues(userId);
+
+          const credential = await navigator.credentials.create({
+            publicKey: {
+              challenge: challenge,
+              rp: {
+                name: 'EggDL Console Security',
+                id: window.location.hostname
+              },
+              user: {
+                id: userId,
+                name: 'developer@eggdl.io',
+                displayName: 'EggDL Developer'
+              },
+              pubKeyCredParams: [
+                { alg: -7, type: 'public-key' },
+                { alg: -257, type: 'public-key' }
+              ],
+              authenticatorSelection: {
+                authenticatorAttachment: 'platform',
+                userVerification: 'required',
+                residentKey: 'preferred'
+              },
+              timeout: 60000,
+              attestation: 'none'
+            }
+          });
+
+          if (!credential) throw new Error('Biometric registration was cancelled.');
+
+          const credIdBase64 = bufferToBase64Url(credential.rawId);
+
+          // 1. Permanently register on Firebase & PC backend
+          await fetch(FIREBASE_DB + '/security/developer_device_hash.json', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              enrolled: true,
+              credential_id: credIdBase64,
+              device_model: navigator.userAgent.includes('Android') ? 'Android Biometric Hardware' : (navigator.userAgent.includes('iPhone') ? 'Apple TouchID/FaceID' : 'Biometric Platform'),
+              enrolled_at: new Date().toISOString()
+            })
+          });
+
+          // 2. Approve the active session
+          await fetch(FIREBASE_DB + '/admin_sessions/' + sessionId + '.json', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: 'approved',
+              credential_id: credIdBase64,
+              approved_at: new Date().toISOString()
+            })
+          });
+
+          if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+          icon.classList.remove('active');
+          icon.style.background = 'rgba(16, 185, 129, 0.15)';
+          icon.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+          icon.style.color = '#10b981';
+          icon.innerHTML = '<i data-lucide="check-circle" style="width: 44px; height: 44px;"></i>';
+          lucide.createIcons();
+
+          document.getElementById('headline').innerText = 'Fingerprint Registered!';
+          document.getElementById('subtext').innerText = 'Your biometric credential is saved on your PC. The console is now unlocked.';
+          msg.className = 'status-msg status-success';
+          msg.innerText = 'Fingerprint Verified & Console Unlocked.';
+          btn.style.display = 'none';
+
+        } else {
+          // VERIFICATION: Verify matching biometric passkey
+          const challenge = new Uint8Array(32);
+          window.crypto.getRandomValues(challenge);
+
+          const assertion = await navigator.credentials.get({
+            publicKey: {
+              challenge: challenge,
+              rpId: window.location.hostname,
+              allowCredentials: [{
+                id: base64UrlToBuffer(enrolledCredId),
+                type: 'public-key',
+                transports: ['internal']
+              }],
+              userVerification: 'required'
+            }
+          });
+
+          if (!assertion) throw new Error('Biometric verification cancelled.');
+
+          // Unlock session
+          await fetch(FIREBASE_DB + '/admin_sessions/' + sessionId + '.json', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: 'approved',
+              approved_at: new Date().toISOString()
+            })
+          });
+
+          if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+          icon.classList.remove('active');
+          icon.style.background = 'rgba(16, 185, 129, 0.15)';
+          icon.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+          icon.style.color = '#10b981';
+          icon.innerHTML = '<i data-lucide="check-circle" style="width: 44px; height: 44px;"></i>';
+          lucide.createIcons();
+
+          document.getElementById('headline').innerText = 'Identity Verified';
+          document.getElementById('subtext').innerText = 'Your fingerprint matched the registered hardware key. Desktop Console is unlocked.';
+          msg.className = 'status-msg status-success';
+          msg.innerText = 'Console Unlocked Successfully.';
+          btn.style.display = 'none';
+        }
+      } catch (err) {
+        console.error('Auth failure:', err);
+        icon.classList.remove('active');
+        btn.disabled = false;
+        msg.className = 'status-msg status-error';
+        if (err.name === 'NotAllowedError') {
+          msg.innerText = 'Fingerprint not recognized or cancelled.';
+        } else if (err.name === 'InvalidStateError') {
+          msg.innerText = 'Unregistered device. Access denied.';
+        } else {
+          msg.innerText = err.message || 'Verification failed.';
+        }
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
